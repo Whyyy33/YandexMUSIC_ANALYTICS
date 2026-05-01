@@ -44,3 +44,5 @@ logs/
 .local/
 .tmp/
 *.bak
+# Локальные заметки
+PROJECT_CONTEXT.md
