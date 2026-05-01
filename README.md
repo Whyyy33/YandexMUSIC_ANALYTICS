@@ -21,3 +21,18 @@
 - **NetworkX + python-louvain** — графовый анализ
 - **scikit-learn** — модель прогноза оттока
 - **Matplotlib + Seaborn** — визуализация
+
+## Установка
+
+```bash
+git clone https://github.com/Whyyy33/YandexMUSIC_ANALYTICS.git
+cd YandexMUSIC_ANALYTICS
+python -m venv venv
+venv\Scripts\activate          # Windows
+pip install -r requirements.txt
+python scripts/download_data.py
+python scripts/prepare_db.py
+```
+## Источник данных
+
+[Yandex Yambda на HuggingFace](https://huggingface.co/datasets/yandex/yambda)
