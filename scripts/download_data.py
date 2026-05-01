@@ -15,7 +15,7 @@ from tqdm import tqdm
 REPO_ID = "yandex/yambda"
 REPO_TYPE = "dataset"
 
-# Реальные пути файлов в репо (flat/500m/, не flat-multievent-500m)
+# Основные файлы событий (flat/500m/)
 FILES = {
     "listens":     "flat/500m/listens.parquet",
     "likes":       "flat/500m/likes.parquet",
@@ -23,14 +23,34 @@ FILES = {
     "multi_event": "flat/500m/multi_event.parquet",
 }
 
+# Маппинги item_id → метаданные (в корне репо, маленькие файлы)
+MAPPINGS = {
+    "album_item_mapping":  "album_item_mapping.parquet",
+    "artist_item_mapping": "artist_item_mapping.parquet",
+}
+
 RAW_DIR = Path(__file__).parent.parent / "data" / "raw"
 
-# Минимальный ожидаемый размер файла в байтах (5 МБ — защита от неполной загрузки)
+# Минимальный размер для основных файлов (5 МБ — защита от обрыва)
 MIN_FILE_SIZE = 5 * 1024 * 1024
+# Маппинги маленькие — достаточно 100 КБ
+MIN_MAPPING_SIZE = 100 * 1024
 
 
-def already_downloaded(path: Path) -> bool:
-    return path.exists() and path.stat().st_size > MIN_FILE_SIZE
+def already_downloaded(path: Path, min_size: int = MIN_FILE_SIZE) -> bool:
+    return path.exists() and path.stat().st_size > min_size
+
+
+def fetch_one(repo_path: str, dest: Path) -> None:
+    local_path = hf_hub_download(
+        repo_id=REPO_ID,
+        filename=repo_path,
+        repo_type=REPO_TYPE,
+        local_dir=str(RAW_DIR),
+    )
+    src = Path(local_path)
+    if src != dest:
+        src.rename(dest)
 
 
 def download_files() -> None:
@@ -41,29 +61,32 @@ def download_files() -> None:
 
     print(f"Целевая папка: {RAW_DIR.resolve()}\n")
 
-    for name, repo_path in tqdm(FILES.items(), desc="Yambda-500M", unit="файл"):
+    # --- Основные файлы событий ---
+    for name, repo_path in tqdm(FILES.items(), desc="Yambda-500M события", unit="файл"):
         dest = RAW_DIR / f"{name}.parquet"
 
-        if already_downloaded(dest):
+        if already_downloaded(dest, MIN_FILE_SIZE):
             tqdm.write(f"  [пропуск] {name}.parquet уже есть ({dest.stat().st_size / 1e9:.2f} ГБ)")
             skipped.append(name)
             continue
 
         tqdm.write(f"  [загрузка] {repo_path} ...")
-        local_path = hf_hub_download(
-            repo_id=REPO_ID,
-            filename=repo_path,
-            repo_type=REPO_TYPE,
-            local_dir=str(RAW_DIR),
-        )
+        fetch_one(repo_path, dest)
+        tqdm.write(f"  [готово]   {name}.parquet ({dest.stat().st_size / 1e9:.2f} ГБ)")
+        downloaded.append(name)
 
-        # hf_hub_download кладёт файл в data/raw/flat/500m/name.parquet — перемещаем наверх
-        src = Path(local_path)
-        if src != dest:
-            src.rename(dest)
+    # --- Маппинги item_id → метаданные ---
+    for name, repo_path in tqdm(MAPPINGS.items(), desc="Маппинги", unit="файл"):
+        dest = RAW_DIR / f"{name}.parquet"
 
-        size_gb = dest.stat().st_size / 1e9
-        tqdm.write(f"  [готово]   {name}.parquet ({size_gb:.2f} ГБ)")
+        if already_downloaded(dest, MIN_MAPPING_SIZE):
+            tqdm.write(f"  [пропуск] {name}.parquet уже есть ({dest.stat().st_size / 1e6:.1f} МБ)")
+            skipped.append(name)
+            continue
+
+        tqdm.write(f"  [загрузка] {repo_path} ...")
+        fetch_one(repo_path, dest)
+        tqdm.write(f"  [готово]   {name}.parquet ({dest.stat().st_size / 1e6:.1f} МБ)")
         downloaded.append(name)
 
     print("\n--- Итог ---")
