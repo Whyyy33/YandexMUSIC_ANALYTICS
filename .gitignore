@@ -46,3 +46,4 @@ logs/
 *.bak
 # Локальные заметки
 PROJECT_CONTEXT.md
+SESSION_LOG.md
