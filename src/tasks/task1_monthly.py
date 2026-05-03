@@ -8,6 +8,7 @@ Task 1 — Динамика прослушиваний по месяцам.
 """
 
 import sys
+import time
 from pathlib import Path
 
 import matplotlib.pyplot as plt
@@ -23,6 +24,7 @@ SECONDS_PER_MONTH = 30 * 24 * 3600
 
 
 def run() -> None:
+    t0 = time.perf_counter()
     print("Task 1: Динамика прослушиваний по месяцам...")
 
     path = find_parquet("listens")
@@ -72,6 +74,7 @@ def run() -> None:
     plt.savefig(out, dpi=150, bbox_inches="tight")
     plt.close()
     print(f"  Сохранено: {out}")
+    print(f"  Время: {time.perf_counter() - t0:.2f} сек")
 
 
 if __name__ == "__main__":

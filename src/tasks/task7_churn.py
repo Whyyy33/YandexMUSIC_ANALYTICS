@@ -9,7 +9,7 @@ Task 7 — Прогноз оттока (churn prediction).
   2. Разбиваем историю пользователя на 2/3 (признаки) и 1/3 (метка)
   3. Метка churn = 1, если в последней трети событий нет
   4. Признаки: всего событий, уникальных треков, avg/std played_ratio,
-               доля органики, число сессий, энтропия треков
+               доля органики, энтропия треков
   5. Модели: LogisticRegression + RandomForestClassifier
   6. Метрики: ROC-AUC, F1, feature importance
 
@@ -17,6 +17,7 @@ Task 7 — Прогноз оттока (churn prediction).
 """
 
 import sys
+import time
 from pathlib import Path
 
 import matplotlib.pyplot as plt
@@ -34,7 +35,7 @@ sys.path.insert(0, str(ROOT))
 from src.config import RESULTS_DIR, SESSION_GAP_MINUTES, TIMESTAMP_UNIT_SECONDS, find_parquet
 
 SESSION_GAP_SEC = SESSION_GAP_MINUTES * 60
-MIN_EVENTS = 20          # минимум событий у пользователя
+MIN_EVENTS = 50          # минимум событий у пользователя
 N_SAMPLE_USERS = 100_000  # сэмплируем для скорости
 
 
@@ -66,8 +67,8 @@ def build_features(df: pl.DataFrame) -> pl.DataFrame:
             pl.len().alias("n_events"),
             pl.col("item_id").n_unique().alias("n_unique_items"),
             pl.col("is_organic").mean().alias("organic_ratio"),
-            pl.col("played_ratio_pct").mean().alias("avg_played_ratio"),
-            pl.col("played_ratio_pct").std().fill_null(0).alias("std_played_ratio"),
+            pl.col("played_ratio_pct").clip(0, 100).mean().alias("avg_played_ratio"),
+            pl.col("played_ratio_pct").clip(0, 100).std().fill_null(0).alias("std_played_ratio"),
             pl.col("track_length_seconds").mean().alias("avg_track_length"),
         ])
         .filter(pl.col("n_events") >= MIN_EVENTS)
@@ -81,6 +82,7 @@ def build_features(df: pl.DataFrame) -> pl.DataFrame:
 
 
 def run() -> None:
+    t0 = time.perf_counter()
     print("Task 7: Прогноз оттока...")
 
     path = find_parquet("listens")
@@ -155,6 +157,7 @@ def run() -> None:
 
     print("\n  Отчёт (RandomForest):")
     print(classification_report(y_test, rf.predict(X_test), target_names=["Активен", "Отток"]))
+    print(f"  Время: {time.perf_counter() - t0:.2f} сек")
 
 
 if __name__ == "__main__":

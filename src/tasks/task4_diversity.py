@@ -10,6 +10,7 @@ Task 4 — Разнообразие слушания: Shannon entropy.
 """
 
 import sys
+import time
 from pathlib import Path
 
 import matplotlib.pyplot as plt
@@ -24,37 +25,22 @@ from src.config import RESULTS_DIR, find_parquet
 MIN_EVENTS_PER_USER = 10  # пользователи с малым числом событий дают нестабильную энтропию
 
 
-def shannon_entropy_expr() -> pl.Expr:
-    """Выражение для Shannon entropy по item_id внутри группы uid."""
-    return (
-        pl.col("item_id")
-        .value_counts()
-        .struct.field("count")
-        .cast(pl.Float64)
-        .pipe(lambda cnt: -(cnt / cnt.sum() * (cnt / cnt.sum()).log(base=2)).sum())
-    )
-
-
 def run() -> None:
+    t0 = time.perf_counter()
     print("Task 4: Shannon entropy разнообразия...")
 
     path = find_parquet("listens")
-
-    # Считаем число событий и энтропию по item_id для каждого пользователя
-    # Делаем это отдельно для органики и рекомендаций
-    df = (
-        pl.scan_parquet(path)
-        .select(["uid", "item_id", "is_organic"])
-        .collect()
-    )
+    lazy = pl.scan_parquet(path).select(["uid", "item_id", "is_organic"])
 
     results = []
     for flag, label in [(1, "organic"), (0, "reco")]:
-        sub = df.filter(pl.col("is_organic") == flag)
-
+        # collect только после агрегации — в памяти оседают uid×item_id, а не 466M строк
         counts = (
-            sub.group_by(["uid", "item_id"])
+            lazy
+            .filter(pl.col("is_organic") == flag)
+            .group_by(["uid", "item_id"])
             .agg(pl.len().alias("cnt"))
+            .collect()
         )
 
         user_totals = counts.group_by("uid").agg(pl.col("cnt").sum().alias("total"))
@@ -109,6 +95,7 @@ def run() -> None:
     plt.savefig(out, dpi=150, bbox_inches="tight")
     plt.close()
     print(f"  Сохранено: {out}")
+    print(f"  Время: {time.perf_counter() - t0:.2f} сек")
 
 
 if __name__ == "__main__":

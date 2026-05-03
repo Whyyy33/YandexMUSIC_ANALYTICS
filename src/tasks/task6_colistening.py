@@ -11,6 +11,7 @@ Task 6 — Граф ко-прослушиваний.
 """
 
 import sys
+import time
 from collections import defaultdict
 from pathlib import Path
 
@@ -28,10 +29,11 @@ SESSION_GAP_SEC  = SESSION_GAP_MINUTES * 60
 MAX_ITEMS_PER_SESSION = 20   # не строим пары для сверхдлинных сессий
 MIN_EDGE_WEIGHT  = 5
 TOP_N_NODES      = 150
-N_SAMPLE_USERS   = 50_000    # берём подвыборку пользователей
+N_SAMPLE_USERS   = 5_000     # берём подвыборку пользователей (уменьшено для первого запуска)
 
 
 def run() -> None:
+    t0 = time.perf_counter()
     print("Task 6: Граф ко-прослушиваний...")
 
     path = find_parquet("listens")
@@ -121,6 +123,7 @@ def run() -> None:
     plt.savefig(out, dpi=150, bbox_inches="tight")
     plt.close()
     print(f"  Сохранено: {out}")
+    print(f"  Время: {time.perf_counter() - t0:.2f} сек")
 
 
 if __name__ == "__main__":

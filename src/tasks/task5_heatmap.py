@@ -9,6 +9,7 @@ Task 5 — Тепловая карта активности: час × день 
 """
 
 import sys
+import time
 from pathlib import Path
 
 import matplotlib.pyplot as plt
@@ -36,6 +37,7 @@ def compute_heatmap(df: pl.DataFrame) -> np.ndarray:
 
 
 def run() -> None:
+    t0 = time.perf_counter()
     print("Task 5: Тепловая карта час/день недели...")
 
     path = find_parquet("listens")
@@ -88,6 +90,7 @@ def run() -> None:
     plt.savefig(out, dpi=150, bbox_inches="tight")
     plt.close()
     print(f"  Сохранено: {out}")
+    print(f"  Время: {time.perf_counter() - t0:.2f} сек")
 
 
 if __name__ == "__main__":
