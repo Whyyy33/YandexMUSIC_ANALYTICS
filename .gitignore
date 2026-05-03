@@ -47,3 +47,6 @@ logs/
 # Локальные заметки
 PROJECT_CONTEXT.md
 SESSION_LOG.md
+
+# Claude Code
+.claude/

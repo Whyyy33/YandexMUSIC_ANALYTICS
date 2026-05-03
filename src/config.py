@@ -33,3 +33,15 @@ SESSION_GAP_MINUTES = 30    # пауза, после которой считае
 RAW_DATA_DIR.mkdir(parents=True, exist_ok=True)
 PROCESSED_DATA_DIR.mkdir(parents=True, exist_ok=True)
 RESULTS_DIR.mkdir(parents=True, exist_ok=True)
+
+
+def find_parquet(name: str) -> Path:
+    """Ищет parquet по имени: сначала data/raw/<name>.parquet, потом flat/500m/."""
+    candidates = [
+        RAW_DATA_DIR / f"{name}.parquet",
+        RAW_DATA_DIR / "flat" / "500m" / f"{name}.parquet",
+    ]
+    for p in candidates:
+        if p.exists() and p.stat().st_size > 1024:
+            return p
+    raise FileNotFoundError(f"Parquet '{name}' не найден. Сначала запусти download_data.py")
