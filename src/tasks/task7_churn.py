@@ -57,7 +57,6 @@ def build_features(df: pl.DataFrame) -> pl.DataFrame:
 
     # Пользователи без событий в будущем = churn
     future_uids = future_part["uid"].unique()
-    all_uids = df["uid"].unique()
 
     # Признаки из train_part
     feats = (
@@ -70,6 +69,9 @@ def build_features(df: pl.DataFrame) -> pl.DataFrame:
             pl.col("played_ratio_pct").clip(0, 100).mean().alias("avg_played_ratio"),
             pl.col("played_ratio_pct").clip(0, 100).std().fill_null(0).alias("std_played_ratio"),
             pl.col("track_length_seconds").mean().alias("avg_track_length"),
+            pl.col("artist_id").n_unique().alias("n_unique_artists"),
+            pl.col("album_id").n_unique().alias("n_unique_albums"),
+            (pl.col("item_id").n_unique() / pl.col("item_id").len()).alias("repeat_ratio"),
         ])
         .filter(pl.col("n_events") >= MIN_EVENTS)
     )
@@ -86,6 +88,8 @@ def run() -> None:
     print("Task 7: Прогноз оттока...")
 
     path = find_parquet("listens")
+    artist_map_path = find_parquet("artist_item_mapping")
+    album_map_path = find_parquet("album_item_mapping")
 
     df = (
         pl.scan_parquet(path)
@@ -101,11 +105,18 @@ def run() -> None:
     uids = df["uid"].unique().sample(min(N_SAMPLE_USERS, df["uid"].n_unique()), seed=42)
     df = df.filter(pl.col("uid").is_in(uids))
 
+    # Обогащаем маппингами artist_id и album_id
+    artist_map = pl.read_parquet(artist_map_path)
+    album_map = pl.read_parquet(album_map_path)
+    df = df.join(artist_map, on="item_id", how="left")
+    df = df.join(album_map, on="item_id", how="left")
+
     feats = build_features(df)
     print(f"  Пользователей: {len(feats):,}, churn rate: {feats['churn'].mean():.1%}")
 
     feature_cols = ["n_events", "n_unique_items", "organic_ratio",
-                    "avg_played_ratio", "std_played_ratio", "avg_track_length"]
+                    "avg_played_ratio", "std_played_ratio", "avg_track_length",
+                    "n_unique_artists", "n_unique_albums", "repeat_ratio"]
     X = feats[feature_cols].to_numpy()
     y = feats["churn"].to_numpy()
 
