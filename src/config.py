@@ -26,7 +26,9 @@ YAMBDA_DATASET = "yandex/yambda"
 YAMBDA_VERSION = "flat-multievent-500m"
 
 # Константы для расчётов
-TIMESTAMP_UNIT_SECONDS = 5  # timestamp в Yambda — дельты по 5 секунд
+# ВАЖНО: timestamp в Yambda — абсолютное значение в 5-секундных тиках от начала датасета,
+# НЕ дельта. Умножай timestamp * TIMESTAMP_UNIT_SECONDS напрямую, без cum_sum.
+TIMESTAMP_UNIT_SECONDS = 5  # 1 тик = 5 секунд реального времени
 SESSION_GAP_MINUTES = 30    # пауза, после которой считаем сессию новой
 
 # Создаём папки если их нет

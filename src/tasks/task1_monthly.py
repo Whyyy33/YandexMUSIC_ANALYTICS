@@ -1,7 +1,9 @@
 """
 Task 1 — Динамика прослушиваний по месяцам.
 
-Временна́я шкала относительная: month_offset = floor(ts_seconds / 2592000).
+timestamp в Yambda — абсолютное время в 5-секундных тиках от точки отсчёта датасета
+(значения монотонно возрастают и не требуют cum_sum).
+month_offset = floor(timestamp * 5 / 2592000) даёт глобальный месяц от начала наблюдений.
 Сравниваем органику vs рекомендации (is_organic).
 
 Вывод: data/results/task1_monthly.png
@@ -28,44 +30,36 @@ def run() -> None:
 
     path = find_parquet("listens")
     artist_map_path = find_parquet("artist_item_mapping")
-
-    # Общий корень — scan + вычисление month_offset.
-    # collect_all с comm_subplan_elim выполнит этот блок один раз для обеих веток.
-    lf_base = (
+    df_monthly = (
         pl.scan_parquet(path)
         .select(["uid", "item_id", "timestamp", "is_organic"])
         .with_columns(
-            (pl.col("timestamp").cum_sum().over("uid") * TIMESTAMP_UNIT_SECONDS).alias("ts_seconds")
+            (pl.col("timestamp").cast(pl.Int64) * TIMESTAMP_UNIT_SECONDS).alias("ts_seconds")
         )
         .with_columns(
             (pl.col("ts_seconds") // SECONDS_PER_MONTH).cast(pl.Int32).alias("month_offset")
         )
-    )
-
-    # Ветка 1 — месячная динамика
-    monthly_lf = (
-        lf_base
         .group_by(["month_offset", "is_organic"])
         .agg(
             pl.len().alias("events"),
             pl.col("uid").n_unique().alias("unique_users"),
         )
         .sort("month_offset")
+        .collect(engine="streaming")
     )
+    print("  Месячная динамика готова")
 
-    # Ветка 2 — топ артистов (join к маппингу)
-    artist_map = pl.scan_parquet(artist_map_path)
-    artists_lf = (
-        lf_base
+    # Ветка 2 — топ артистов (streaming + join)
+    df_artists = (
+        pl.scan_parquet(path)
         .select(["item_id", "is_organic"])
-        .join(artist_map, on="item_id", how="left")
+        .join(pl.scan_parquet(artist_map_path), on="item_id", how="left")
         .filter(pl.col("artist_id").is_not_null())
         .group_by(["artist_id", "is_organic"])
         .agg(pl.len().alias("listens"))
+        .collect(engine="streaming")
     )
-
-    # Один проход по диску — Polars объединяет планы и устраняет общий subplan
-    df_monthly, df_artists = pl.collect_all([monthly_lf, artists_lf])
+    print("  Топ артистов готов")
 
     # --- Подготовка данных ---
     df_monthly = df_monthly.filter(pl.col("month_offset").is_between(0, 23))

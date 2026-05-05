@@ -2,11 +2,13 @@
 Task 4 — Разнообразие слушания: Shannon entropy.
 
 Для каждого пользователя считаем энтропию двумя способами:
-    - по item_id:   H = -sum(p_i * log2(p_i)), p_i = доля прослушиваний трека i
-    - по artist_id: та же формула, единица группировки — артист (через artist_item_mapping)
+    - по item_id:   H = -sum(p_i * log2(p_i))
+    - по artist_id: та же формула, группировка — артист
 
-Верхний ряд: item-энтропия. Нижний ряд: artist-энтропия.
-Сравниваем органику vs рекомендации.
+Читаем данные чанками по uid % CHUNKS чтобы не грузить 466M строк в RAM.
+Энтропию считаем ВНУТРИ цикла на каждом чанке — наружу выходит только массив
+значений per-uid (по float64 на пользователя), большие промежуточные таблицы
+не накапливаются.
 
 Вывод: data/results/task4_diversity.png
 """
@@ -15,6 +17,7 @@ import sys
 import time
 from pathlib import Path
 
+import duckdb
 import matplotlib.pyplot as plt
 import numpy as np
 import polars as pl
@@ -24,24 +27,33 @@ sys.path.insert(0, str(ROOT))
 
 from src.config import RESULTS_DIR, find_parquet
 
-MIN_EVENTS_PER_USER = 10  # пользователи с малым числом событий дают нестабильную энтропию
+MIN_EVENTS_PER_USER = 10
+CHUNKS = 20  # читаем 1/20 за раз → ~23M строк на чанк → ~1-2 ГБ RAM
 
 
-def _entropy_from_counts(counts: pl.DataFrame) -> np.ndarray:
-    """Считает Shannon entropy по пользователям. counts: (uid, <id_col>, cnt)."""
-    user_totals = counts.group_by("uid").agg(pl.col("cnt").sum().alias("total"))
-    merged = counts.join(user_totals, on="uid").filter(pl.col("total") >= MIN_EVENTS_PER_USER)
-    entropies = (
-        merged
-        .with_columns((pl.col("cnt").cast(pl.Float64) / pl.col("total")).alias("p"))
-        .with_columns((-pl.col("p") * pl.col("p").log(base=2)).alias("h_contrib"))
-        .group_by("uid")
-        .agg(pl.col("h_contrib").sum().alias("entropy"))
-    )
-    return entropies["entropy"].to_numpy()
+def _entropy_per_user(counts: pl.DataFrame) -> tuple[np.ndarray, np.ndarray]:
+    """Shannon entropy по пользователям из (uid, <item|artist>, is_organic, cnt).
+       Возвращает (h_organic, h_reco)."""
+    results = []
+    for is_org in [1, 0]:
+        sub = counts.filter(pl.col("is_organic") == is_org)
+        if sub.is_empty():
+            results.append(np.array([], dtype=np.float64))
+            continue
+        user_totals = sub.group_by("uid").agg(pl.col("cnt").sum().alias("total"))
+        merged = sub.join(user_totals, on="uid").filter(pl.col("total") >= MIN_EVENTS_PER_USER)
+        h = (
+            merged
+            .with_columns((pl.col("cnt").cast(pl.Float64) / pl.col("total")).alias("p"))
+            .with_columns((-pl.col("p") * pl.col("p").log(base=2)).alias("hc"))
+            .group_by("uid")
+            .agg(pl.col("hc").sum().alias("entropy"))
+        )["entropy"].to_numpy()
+        results.append(h)
+    return results[0], results[1]
 
 
-def _plot_entropy_row(axes_row, h_organic: np.ndarray, h_reco: np.ndarray, label: str) -> None:
+def _plot_entropy_row(axes_row, h_organic, h_reco, label):
     ax = axes_row[0]
     ax.hist(h_organic, bins=60, alpha=0.6, density=True,
             label=f"Органика (med={np.median(h_organic):.2f})", color="steelblue")
@@ -54,12 +66,12 @@ def _plot_entropy_row(axes_row, h_organic: np.ndarray, h_reco: np.ndarray, label
     ax.grid(alpha=0.3)
 
     ax2 = axes_row[1]
-    ax2.boxplot(
-        [h_organic, h_reco], labels=["Органика", "Рекомендации"],
-        patch_artist=True,
-        boxprops=dict(facecolor="steelblue", alpha=0.6),
-        medianprops=dict(color="black", linewidth=2),
-    )
+    bp = ax2.boxplot([h_organic, h_reco], tick_labels=["Органика", "Рекомендации"],
+                     patch_artist=True,
+                     medianprops=dict(color="black", linewidth=2))
+    for patch, color in zip(bp["boxes"], ["steelblue", "coral"]):
+        patch.set_facecolor(color)
+        patch.set_alpha(0.6)
     ax2.set_ylabel("Shannon entropy (биты)")
     ax2.set_title(f"Органика vs рекомендации — {label}")
     ax2.grid(axis="y", alpha=0.3)
@@ -69,54 +81,52 @@ def run() -> None:
     t0 = time.perf_counter()
     print("Task 4: Shannon entropy разнообразия...")
 
-    path = find_parquet("listens")
-    artist_map_path = find_parquet("artist_item_mapping")
+    path        = str(find_parquet("listens"))
+    artist_path = str(find_parquet("artist_item_mapping"))
 
-    # Общий корень — comm_subplan_elim устранит дублирование scan для всех 4 веток
-    lf_base = pl.scan_parquet(path).select(["uid", "item_id", "is_organic"])
+    # На каждом чанке считаем энтропию сразу — наружу выходят только массивы float
+    item_h_org_parts:   list[np.ndarray] = []
+    item_h_reco_parts:  list[np.ndarray] = []
+    artist_h_org_parts: list[np.ndarray] = []
+    artist_h_reco_parts:list[np.ndarray] = []
 
-    # Ветки по item_id (без join)
-    item_org_lf = (
-        lf_base
-        .filter(pl.col("is_organic") == 1)
-        .group_by(["uid", "item_id"])
-        .agg(pl.len().alias("cnt"))
-    )
-    item_reco_lf = (
-        lf_base
-        .filter(pl.col("is_organic") == 0)
-        .group_by(["uid", "item_id"])
-        .agg(pl.len().alias("cnt"))
-    )
+    for chunk_id in range(CHUNKS):
+        print(f"  Чанк {chunk_id + 1}/{CHUNKS}...", end=" ", flush=True)
+        con = duckdb.connect()
 
-    # Ветки по artist_id — join тоже является общим subplan для двух веток
-    lf_with_artist = (
-        lf_base
-        .join(pl.scan_parquet(artist_map_path), on="item_id", how="left")
-        .filter(pl.col("artist_id").is_not_null())
-    )
-    artist_org_lf = (
-        lf_with_artist
-        .filter(pl.col("is_organic") == 1)
-        .group_by(["uid", "artist_id"])
-        .agg(pl.len().alias("cnt"))
-    )
-    artist_reco_lf = (
-        lf_with_artist
-        .filter(pl.col("is_organic") == 0)
-        .group_by(["uid", "artist_id"])
-        .agg(pl.len().alias("cnt"))
-    )
+        item_chunk = con.execute(f"""
+            SELECT uid, item_id, is_organic, COUNT(*) AS cnt
+            FROM read_parquet('{path}')
+            WHERE (uid // 10) % {CHUNKS} = {chunk_id}
+            GROUP BY uid, item_id, is_organic
+        """).pl()
 
-    # Один проход по диску — Polars объединяет 4 плана через comm_subplan_elim
-    counts_item_org, counts_item_reco, counts_artist_org, counts_artist_reco = pl.collect_all(
-        [item_org_lf, item_reco_lf, artist_org_lf, artist_reco_lf]
-    )
+        artist_chunk = con.execute(f"""
+            SELECT l.uid, a.artist_id, l.is_organic, COUNT(*) AS cnt
+            FROM read_parquet('{path}') l
+            JOIN read_parquet('{artist_path}') a ON l.item_id = a.item_id
+            WHERE (l.uid // 10) % {CHUNKS} = {chunk_id}
+            GROUP BY l.uid, a.artist_id, l.is_organic
+        """).pl()
 
-    item_h_org = _entropy_from_counts(counts_item_org)
-    item_h_reco = _entropy_from_counts(counts_item_reco)
-    artist_h_org = _entropy_from_counts(counts_artist_org)
-    artist_h_reco = _entropy_from_counts(counts_artist_reco)
+        con.close()
+
+        h_io, h_ir = _entropy_per_user(item_chunk)
+        h_ao, h_ar = _entropy_per_user(artist_chunk)
+        item_h_org_parts.append(h_io)
+        item_h_reco_parts.append(h_ir)
+        artist_h_org_parts.append(h_ao)
+        artist_h_reco_parts.append(h_ar)
+
+        # Освобождаем тяжёлые DataFrame до следующей итерации
+        del item_chunk, artist_chunk
+        print(f"item users(org/reco)={len(h_io):,}/{len(h_ir):,} "
+              f"artist={len(h_ao):,}/{len(h_ar):,}", flush=True)
+
+    item_h_org   = np.concatenate(item_h_org_parts)   if item_h_org_parts   else np.array([])
+    item_h_reco  = np.concatenate(item_h_reco_parts)  if item_h_reco_parts  else np.array([])
+    artist_h_org = np.concatenate(artist_h_org_parts) if artist_h_org_parts else np.array([])
+    artist_h_reco= np.concatenate(artist_h_reco_parts)if artist_h_reco_parts else np.array([])
 
     print(f"  item-энтропия:   organic med={np.median(item_h_org):.2f}, reco med={np.median(item_h_reco):.2f}")
     print(f"  artist-энтропия: organic med={np.median(artist_h_org):.2f}, reco med={np.median(artist_h_reco):.2f}")
@@ -124,7 +134,7 @@ def run() -> None:
     fig, axes = plt.subplots(2, 2, figsize=(14, 10))
     fig.suptitle("Разнообразие слушания (Shannon entropy)", fontsize=14, fontweight="bold")
 
-    _plot_entropy_row(axes[0], item_h_org, item_h_reco, "по трекам")
+    _plot_entropy_row(axes[0], item_h_org,   item_h_reco,   "по трекам")
     _plot_entropy_row(axes[1], artist_h_org, artist_h_reco, "по артистам")
 
     plt.tight_layout()

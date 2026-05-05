@@ -17,6 +17,7 @@ from pathlib import Path
 
 import matplotlib.pyplot as plt
 import networkx as nx
+import numpy as np
 import polars as pl
 from community import best_partition
 
@@ -35,8 +36,8 @@ N_SAMPLE_USERS = 5_000
 
 # Параметры графа артистов
 MAX_LISTENED_ARTISTS_PER_SESSION = 30
-MIN_EDGE_WEIGHT_ARTIST = 10
-TOP_N_ARTISTS = 80
+MIN_EDGE_WEIGHT_ARTIST = 25
+TOP_N_ARTISTS = 100
 
 
 def _make_graph(edge_weights: dict[tuple[int, int], int], min_weight: int) -> nx.Graph:
@@ -65,10 +66,22 @@ def _plot_graph_row(
     partition = best_partition(G, weight="weight", random_state=42)
     n_comm = len(set(partition.values()))
 
-    pos = nx.spring_layout(G, seed=42, k=0.5)
+    pos = nx.spring_layout(G, seed=42, k=1.2, iterations=80)
     colors = [partition[n] for n in G.nodes()]
-    edge_widths = [G[u][v]["weight"] * 0.2 for u, v in G.edges()]
-    node_sizes = [node_strength[n] * 0.3 + 20 for n in G.nodes()]
+
+    # Рёбра: нормируем ширину, чтобы максимум был ~3
+    edge_w = np.array([G[u][v]["weight"] for u, v in G.edges()], dtype=float)
+    if edge_w.size:
+        edge_widths = (edge_w / edge_w.max() * 2.5 + 0.3).tolist()
+    else:
+        edge_widths = []
+
+    # Узлы: нормируем по максимальной strength → диапазон ~30..400
+    sub_strength = np.array([node_strength[n] for n in G.nodes()], dtype=float)
+    if sub_strength.size:
+        node_sizes = (sub_strength / sub_strength.max() * 370 + 30).tolist()
+    else:
+        node_sizes = []
 
     ax = axes_row[0]
     ax.set_title(f"{title_graph}\nLouvain: {n_comm} сообществ")
@@ -101,11 +114,18 @@ def run() -> None:
     path = find_parquet("listens")
     artist_map_path = find_parquet("artist_item_mapping")
 
+    # Сначала получаем uid для сэмпла — дёшево, без загрузки всего файла
+    uid_series = pl.scan_parquet(path).select("uid").unique().collect()["uid"]
+    sample_uids = uid_series.sample(min(N_SAMPLE_USERS, len(uid_series)), seed=42).to_list()
+
+    # timestamp — абсолютное значение в 5-сек тиках, умножаем напрямую
+    # Фильтр по uid стоит ДО collect — в память попадает только сэмпл
     df = (
         pl.scan_parquet(path)
         .select(["uid", "item_id", "timestamp"])
+        .filter(pl.col("uid").is_in(sample_uids))
         .with_columns(
-            (pl.col("timestamp").cum_sum().over("uid") * TIMESTAMP_UNIT_SECONDS).alias("ts_seconds")
+            (pl.col("timestamp").cast(pl.Int64) * TIMESTAMP_UNIT_SECONDS).alias("ts_seconds")
         )
         .with_columns(
             (
@@ -118,10 +138,6 @@ def run() -> None:
         )
         .collect()
     )
-
-    # Сэмплируем пользователей
-    unique_uids = df["uid"].unique().sample(min(N_SAMPLE_USERS, df["uid"].n_unique()), seed=42)
-    df = df.filter(pl.col("uid").is_in(unique_uids))
 
     # Добавляем artist_id заранее — чтобы в цикле не делать второй проход
     artist_map = pl.read_parquet(artist_map_path)

@@ -15,6 +15,7 @@ from pathlib import Path
 
 import matplotlib.pyplot as plt
 import networkx as nx
+import numpy as np
 import polars as pl
 from community import best_partition  # python-louvain
 
@@ -30,8 +31,8 @@ TOP_N_NODES = 200
 
 # Параметры графа артистов
 MAX_LIKED_ARTISTS_PER_USER = 50
-MIN_EDGE_WEIGHT_ARTIST = 5
-TOP_N_ARTISTS = 100
+MIN_EDGE_WEIGHT_ARTIST = 15
+TOP_N_ARTISTS = 120
 
 
 def _build_graph(uid_to_ids: dict[int, list[int]], max_per_user: int, min_weight: int) -> nx.Graph:
@@ -86,10 +87,20 @@ def _plot_graph_row(
     partition = best_partition(G, weight="weight", random_state=42)
     n_comm = len(set(partition.values()))
 
-    pos = nx.spring_layout(G, seed=42, k=0.5)
+    pos = nx.spring_layout(G, seed=42, k=1.2, iterations=80)
     colors = [partition[n] for n in G.nodes()]
-    edge_widths = [G[u][v]["weight"] * 0.3 for u, v in G.edges()]
-    node_sizes = [node_strength[n] * 0.5 + 20 for n in G.nodes()]
+
+    edge_w = np.array([G[u][v]["weight"] for u, v in G.edges()], dtype=float)
+    if edge_w.size:
+        edge_widths = (edge_w / edge_w.max() * 2.5 + 0.3).tolist()
+    else:
+        edge_widths = []
+
+    sub_strength = np.array([node_strength[n] for n in G.nodes()], dtype=float)
+    if sub_strength.size:
+        node_sizes = (sub_strength / sub_strength.max() * 370 + 30).tolist()
+    else:
+        node_sizes = []
 
     # Граф
     ax = axes_row[0]
