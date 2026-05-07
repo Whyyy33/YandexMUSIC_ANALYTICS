@@ -3,9 +3,11 @@
 Пропускает файлы, которые уже скачаны (проверка по размеру).
 
 Использование:
-    python scripts/download_data.py
+    python scripts/download_data.py                    # основные файлы
+    python scripts/download_data.py --with-embeddings  # + embeddings.parquet (13.8 ГБ, для task6 UMAP)
 """
 
+import argparse
 import sys
 from pathlib import Path
 
@@ -27,6 +29,11 @@ FILES = {
 MAPPINGS = {
     "album_item_mapping":  "album_item_mapping.parquet",
     "artist_item_mapping": "artist_item_mapping.parquet",
+}
+
+# Опционально (--with-embeddings) — нужно только для task6 UMAP-валидации
+EMBEDDINGS = {
+    "embeddings": "embeddings.parquet",  # ~13.8 ГБ
 }
 
 RAW_DIR = Path(__file__).parent.parent / "data" / "raw"
@@ -53,7 +60,7 @@ def fetch_one(repo_path: str, dest: Path) -> None:
         src.rename(dest)
 
 
-def download_files() -> None:
+def download_files(with_embeddings: bool = False) -> None:
     RAW_DIR.mkdir(parents=True, exist_ok=True)
 
     skipped = []
@@ -89,6 +96,25 @@ def download_files() -> None:
         tqdm.write(f"  [готово]   {name}.parquet ({dest.stat().st_size / 1e6:.1f} МБ)")
         downloaded.append(name)
 
+    # --- Аудио-эмбеддинги (опционально, для task6 UMAP) ---
+    if with_embeddings:
+        for name, repo_path in tqdm(EMBEDDINGS.items(), desc="Эмбеддинги (большой)", unit="файл"):
+            dest = RAW_DIR / f"{name}.parquet"
+
+            # Минимум 10 ГБ — embeddings.parquet ~13.8 ГБ, обрыв даст меньше
+            if already_downloaded(dest, 10 * 1024 ** 3):
+                tqdm.write(f"  [пропуск] {name}.parquet уже есть ({dest.stat().st_size / 1e9:.2f} ГБ)")
+                skipped.append(name)
+                continue
+
+            tqdm.write(f"  [загрузка] {repo_path} (~13.8 ГБ, может занять долго)...")
+            fetch_one(repo_path, dest)
+            tqdm.write(f"  [готово]   {name}.parquet ({dest.stat().st_size / 1e9:.2f} ГБ)")
+            downloaded.append(name)
+    else:
+        print("\n[info] embeddings.parquet (13.8 ГБ) НЕ скачан. "
+              "Если нужен task6 UMAP — запусти `python scripts/download_data.py --with-embeddings`")
+
     print("\n--- Итог ---")
     if downloaded:
         print(f"Скачано:  {', '.join(downloaded)}")
@@ -97,8 +123,15 @@ def download_files() -> None:
 
 
 if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description="Скачивание датасета Yambda-500M с HuggingFace")
+    parser.add_argument(
+        "--with-embeddings",
+        action="store_true",
+        help="Дополнительно скачать embeddings.parquet (13.8 ГБ) для task6 UMAP-валидации",
+    )
+    args = parser.parse_args()
     try:
-        download_files()
+        download_files(with_embeddings=args.with_embeddings)
     except KeyboardInterrupt:
         print("\nПрервано пользователем.")
         sys.exit(1)

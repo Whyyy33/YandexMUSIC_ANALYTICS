@@ -19,7 +19,10 @@ numpy>=2.0.0
 matplotlib>=3.9.0
 seaborn>=0.13.0
 adjustText>=1.3.0      # task3/task6: непересекающиеся подписи узлов графа
-umap-learn>=0.5.12     # task6: UMAP-проекция артистов по аудио-эмбеддингам (тянет numba/llvmlite/pynndescent)
+umap-learn>=0.5.12     # task6: UMAP-проекция артистов по аудио-эмбеддингам
+numba>=0.60            # transitive для umap-learn — фиксируем чтобы не зависеть от резолвера
+llvmlite>=0.43         # transitive для numba
+pynndescent>=0.5       # transitive для umap-learn (kNN)
 psutil>=7.2.0          # task6: контроль RSS между DuckDB-коннектами
 
 # Прогресс-бары
