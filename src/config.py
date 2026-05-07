@@ -31,6 +31,14 @@ YAMBDA_VERSION = "flat-multievent-500m"
 TIMESTAMP_UNIT_SECONDS = 5  # 1 тик = 5 секунд реального времени
 SESSION_GAP_MINUTES = 30    # пауза, после которой считаем сессию новой
 
+# Лимиты памяти / сэмпла — общий потолок для тяжёлых тасков.
+# Машина: 16 ГБ RAM, оставляем запас под ОС и Polars/Python.
+DUCKDB_MEMORY_LIMIT = "6GB"
+DUCKDB_THREADS = 4
+MAX_USERS_TASK6 = 5_000
+MAX_USERS_TASK7 = 90_000
+RAM_SOFT_CAP_GB = 2.0  # df.estimated_size() выше этого — падаем с явным сообщением
+
 # Создаём папки если их нет
 RAW_DATA_DIR.mkdir(parents=True, exist_ok=True)
 PROCESSED_DATA_DIR.mkdir(parents=True, exist_ok=True)
