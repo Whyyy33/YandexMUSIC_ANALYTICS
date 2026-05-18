@@ -9,6 +9,7 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 # Папки с данными
 DATA_DIR = PROJECT_ROOT / "data"
 RAW_DATA_DIR = DATA_DIR / "raw"
+DEMO_DATA_DIR = DATA_DIR / "demo"
 PROCESSED_DATA_DIR = DATA_DIR / "processed"
 RESULTS_DIR = DATA_DIR / "results"
 
@@ -41,17 +42,25 @@ RAM_SOFT_CAP_GB = 2.0  # df.estimated_size() выше этого — падае�
 
 # Создаём папки если их нет
 RAW_DATA_DIR.mkdir(parents=True, exist_ok=True)
+DEMO_DATA_DIR.mkdir(parents=True, exist_ok=True)
 PROCESSED_DATA_DIR.mkdir(parents=True, exist_ok=True)
 RESULTS_DIR.mkdir(parents=True, exist_ok=True)
 
 
 def find_parquet(name: str) -> Path:
-    """Ищет parquet по имени: сначала data/raw/<name>.parquet, потом flat/500m/."""
+    """Ищет parquet по имени. Приоритет: raw -> raw/flat/500m -> demo.
+    Если ничего не найдено — FileNotFoundError с понятным сообщением.
+    """
     candidates = [
         RAW_DATA_DIR / f"{name}.parquet",
         RAW_DATA_DIR / "flat" / "500m" / f"{name}.parquet",
+        DEMO_DATA_DIR / f"{name}.parquet",
     ]
     for p in candidates:
         if p.exists() and p.stat().st_size > 1024:
             return p
-    raise FileNotFoundError(f"Parquet '{name}' не найден. Сначала запусти download_data.py")
+    raise FileNotFoundError(
+        f"Parquet '{name}' не найден ни в data/raw/, ни в data/demo/. "
+        f"Запустите: python scripts/download_data.py (полные данные) "
+        f"или распакуйте data_demo.zip (демо для дистрибутива)."
+    )

@@ -5,6 +5,10 @@ data/processed/
 *.duckdb
 *.db
 
+# Дистрибутив (собирается локально)
+dist/
+dist_test/
+
 # Python окружение
 venv/
 env/
