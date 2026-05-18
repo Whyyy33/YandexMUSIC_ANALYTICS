@@ -531,136 +531,152 @@ def run() -> None:
         title=f"Матрица совместных прослушиваний — артисты (n={G_a_top.number_of_nodes()})",
     )
 
-    # --- UMAP по аудио-эмбеддингам ---
-    import psutil as _psutil
-    import umap
-
-    proc = _psutil.Process()
-    rss_before_track = proc.memory_info().rss / 1024**3
-    print(f"  [emb track] RSS before: {rss_before_track:.2f} GB")
-    track_ids = list(G_t_top.nodes())
-    t_load = time.perf_counter()
-    track_emb_df = _load_embeddings_for_items(track_ids)
-    rss_after_track = proc.memory_info().rss / 1024**3
-    print(f"  [emb track] загружено {len(track_emb_df):,} строк / {len(track_ids)} запрошено, "
-          f"RSS after: {rss_after_track:.2f} GB, время: {time.perf_counter() - t_load:.1f} сек")
-    t_keys, T = _embed_matrix(track_emb_df, key_col="item_id")
     track_purity = 0.0
-    if len(t_keys) >= 5:
-        n_neighbors_t = min(15, max(2, len(t_keys) - 1))
-        print(f"  [umap track] input shape={T.shape}, n_neighbors={n_neighbors_t}")
-        t_umap = time.perf_counter()
-        reducer_t = umap.UMAP(n_neighbors=n_neighbors_t, min_dist=0.1, n_components=2,
-                              metric="cosine", random_state=42)
-        T_xy = reducer_t.fit_transform(T)
-        print(f"  [umap track] output shape={T_xy.shape}, fit={time.perf_counter() - t_umap:.1f} сек")
-        # Сортируем by degree desc для красивых подписей
-        degree_t = {n: sum(d["weight"] for _, _, d in G_t_top.edges(n, data=True)) for n in G_t_top.nodes()}
-        order_idx = sorted(range(len(t_keys)), key=lambda i: -degree_t.get(t_keys[i], 0))
-        t_keys_ord = [t_keys[i] for i in order_idx]
-        T_xy_ord = T_xy[order_idx]
-        track_purity = _plot_umap(
-            axes[0, 2], T_xy_ord, t_keys_ord, part_t, order_t, cmap_t, track_lab,
-            n_labels=8, title="UMAP проекция треков по аудио-эмбеддингам",
-        )
-    else:
-        axes[0, 2].text(0.5, 0.5, "Недостаточно эмбеддингов для треков",
-                        ha="center", va="center", transform=axes[0, 2].transAxes)
-        axes[0, 2].axis("off")
-
-    # Для артистов — эмбеддинги их треков, усреднённые
-    rss_before_artist = proc.memory_info().rss / 1024**3
-    print(f"  [emb artist] RSS before: {rss_before_artist:.2f} GB")
-    artist_ids = list(G_a_top.nodes())
-    artist_map = pl.read_parquet(artist_map_path)
-    artist_items = (
-        artist_map.filter(pl.col("artist_id").is_in(artist_ids))
-        .select(["artist_id", "item_id"])
-    )
-    print(f"  [emb artist] artist→item rows: {len(artist_items):,}")
-    art_track_ids = artist_items["item_id"].unique().to_list()
-    t_load_a = time.perf_counter()
-    art_emb_df = _load_embeddings_for_items(art_track_ids)
-    rss_after_artist = proc.memory_info().rss / 1024**3
-    print(f"  [emb artist] загружено {len(art_emb_df):,} строк / {len(art_track_ids):,} запрошено, "
-          f"RSS after: {rss_after_artist:.2f} GB, время: {time.perf_counter() - t_load_a:.1f} сек")
-    # Среднее эмбеддингов треков по артисту — поэлементно, через numpy.
-    # polars Array.mean() вернул бы скаляр (среднее всех элементов всех векторов).
-    if len(art_emb_df) > 0:
-        joined = art_emb_df.join(artist_items, on="item_id", how="inner")
-        embs_by_artist: dict[int, list[np.ndarray]] = {}
-        for artist_id, embed in zip(
-            joined["artist_id"].to_list(),
-            joined["normalized_embed"].to_list(),
-        ):
-            embs_by_artist.setdefault(int(artist_id), []).append(
-                np.asarray(embed, dtype=np.float32)
-            )
-        a_keys = list(embs_by_artist.keys())
-        A = np.array(
-            [np.mean(np.stack(embs_by_artist[a]), axis=0) for a in a_keys],
-            dtype=np.float32,
-        )
-        embed_dim = A.shape[1] if A.ndim == 2 else 0
-        assert A.ndim == 2 and A.shape == (len(a_keys), embed_dim), (
-            f"Ожидаем (N, D), получили {A.shape}"
-        )
-        print(f"  [emb artist] средний эмбед на артиста: shape={A.shape}")
-    else:
-        a_keys, A = [], np.zeros((0, 1))
-
     artist_purity = 0.0
-    if len(a_keys) >= 5:
-        n_neighbors_a = min(15, max(2, len(a_keys) - 1))
-        print(f"  [umap artist] input shape={A.shape}, n_neighbors={n_neighbors_a}")
-        t_umap_a = time.perf_counter()
-        reducer_a = umap.UMAP(n_neighbors=n_neighbors_a, min_dist=0.1, n_components=2,
-                              metric="cosine", random_state=42)
-        A_xy = reducer_a.fit_transform(A)
-        print(f"  [umap artist] output shape={A_xy.shape}, fit={time.perf_counter() - t_umap_a:.1f} сек")
-        degree_a = {n: sum(d["weight"] for _, _, d in G_a_top.edges(n, data=True)) for n in G_a_top.nodes()}
-        order_idx = sorted(range(len(a_keys)), key=lambda i: -degree_a.get(a_keys[i], 0))
-        a_keys_ord = [a_keys[i] for i in order_idx]
-        A_xy_ord = A_xy[order_idx]
-        artist_purity = _plot_umap(
-            axes[1, 2], A_xy_ord, a_keys_ord, part_a, order_a, cmap_a, artist_lab,
-            n_labels=10, title="UMAP проекция артистов по аудио-эмбеддингам",
+
+    # --- UMAP по аудио-эмбеддингам (опционально) ---
+    if EMBEDDINGS_PATH.exists():
+        import psutil as _psutil
+        import umap
+
+        proc = _psutil.Process()
+        rss_before_track = proc.memory_info().rss / 1024**3
+        print(f"  [emb track] RSS before: {rss_before_track:.2f} GB")
+        track_ids = list(G_t_top.nodes())
+        t_load = time.perf_counter()
+        track_emb_df = _load_embeddings_for_items(track_ids)
+        rss_after_track = proc.memory_info().rss / 1024**3
+        print(f"  [emb track] загружено {len(track_emb_df):,} строк / {len(track_ids)} запрошено, "
+              f"RSS after: {rss_after_track:.2f} GB, время: {time.perf_counter() - t_load:.1f} сек")
+        t_keys, T = _embed_matrix(track_emb_df, key_col="item_id")
+        track_purity = 0.0
+        if len(t_keys) >= 5:
+            n_neighbors_t = min(15, max(2, len(t_keys) - 1))
+            print(f"  [umap track] input shape={T.shape}, n_neighbors={n_neighbors_t}")
+            t_umap = time.perf_counter()
+            reducer_t = umap.UMAP(n_neighbors=n_neighbors_t, min_dist=0.1, n_components=2,
+                                  metric="cosine", random_state=42)
+            T_xy = reducer_t.fit_transform(T)
+            print(f"  [umap track] output shape={T_xy.shape}, fit={time.perf_counter() - t_umap:.1f} сек")
+            # Сортируем by degree desc для красивых подписей
+            degree_t = {n: sum(d["weight"] for _, _, d in G_t_top.edges(n, data=True)) for n in G_t_top.nodes()}
+            order_idx = sorted(range(len(t_keys)), key=lambda i: -degree_t.get(t_keys[i], 0))
+            t_keys_ord = [t_keys[i] for i in order_idx]
+            T_xy_ord = T_xy[order_idx]
+            track_purity = _plot_umap(
+                axes[0, 2], T_xy_ord, t_keys_ord, part_t, order_t, cmap_t, track_lab,
+                n_labels=8, title="UMAP проекция треков по аудио-эмбеддингам",
+            )
+        else:
+            axes[0, 2].text(0.5, 0.5, "Недостаточно эмбеддингов для треков",
+                            ha="center", va="center", transform=axes[0, 2].transAxes)
+            axes[0, 2].axis("off")
+
+        # Для артистов — эмбеддинги их треков, усреднённые
+        rss_before_artist = proc.memory_info().rss / 1024**3
+        print(f"  [emb artist] RSS before: {rss_before_artist:.2f} GB")
+        artist_ids = list(G_a_top.nodes())
+        artist_map = pl.read_parquet(artist_map_path)
+        artist_items = (
+            artist_map.filter(pl.col("artist_id").is_in(artist_ids))
+            .select(["artist_id", "item_id"])
         )
-        # Аннотации: малое сообщество vs крупные перемешанные
-        comm_index_a = {c: i for i, c in enumerate(order_a)}
-        comm_centroids: dict[int, np.ndarray] = {}
-        for i, k in enumerate(a_keys_ord):
-            c = comm_index_a[part_a[k]]
-            comm_centroids.setdefault(c, []).append(A_xy_ord[i])
-        comm_sizes_local = {c: len(v) for c, v in comm_centroids.items()}
-        if comm_sizes_local:
-            small_c = min(comm_sizes_local, key=comm_sizes_local.get)
-            big_cs  = sorted(comm_sizes_local, key=comm_sizes_local.get, reverse=True)[:2]
-            small_xy = np.mean(np.array(comm_centroids[small_c]), axis=0)
-            big_xy   = np.mean(np.concatenate(
-                [np.array(comm_centroids[c]) for c in big_cs]
-            ), axis=0)
-            ax_u = axes[1, 2]
-            xlim = ax_u.get_xlim(); ylim = ax_u.get_ylim()
-            x_off = (xlim[1] - xlim[0]) * 0.25
-            y_off = (ylim[1] - ylim[0]) * 0.30
-            ax_u.annotate(
-                f"Акустически изолированная\nгруппа (n={comm_sizes_local[small_c]})",
-                xy=small_xy, xytext=(small_xy[0] + x_off, small_xy[1] - y_off),
-                fontsize=9, ha="center",
-                bbox=dict(boxstyle="round,pad=0.3", fc="#fff7c2", ec="black", lw=0.6, alpha=0.9),
-                arrowprops=dict(arrowstyle="->", color="black", lw=0.8),
+        print(f"  [emb artist] artist→item rows: {len(artist_items):,}")
+        art_track_ids = artist_items["item_id"].unique().to_list()
+        t_load_a = time.perf_counter()
+        art_emb_df = _load_embeddings_for_items(art_track_ids)
+        rss_after_artist = proc.memory_info().rss / 1024**3
+        print(f"  [emb artist] загружено {len(art_emb_df):,} строк / {len(art_track_ids):,} запрошено, "
+              f"RSS after: {rss_after_artist:.2f} GB, время: {time.perf_counter() - t_load_a:.1f} сек")
+        # Среднее эмбеддингов треков по артисту — поэлементно, через numpy.
+        # polars Array.mean() вернул бы скаляр (среднее всех элементов всех векторов).
+        if len(art_emb_df) > 0:
+            joined = art_emb_df.join(artist_items, on="item_id", how="inner")
+            embs_by_artist: dict[int, list[np.ndarray]] = {}
+            for artist_id, embed in zip(
+                joined["artist_id"].to_list(),
+                joined["normalized_embed"].to_list(),
+            ):
+                embs_by_artist.setdefault(int(artist_id), []).append(
+                    np.asarray(embed, dtype=np.float32)
+                )
+            a_keys = list(embs_by_artist.keys())
+            A = np.array(
+                [np.mean(np.stack(embs_by_artist[a]), axis=0) for a in a_keys],
+                dtype=np.float32,
             )
-            ax_u.annotate(
-                "Поведенческие сообщества,\nакустически перемешаны",
-                xy=big_xy, xytext=(big_xy[0] - x_off, big_xy[1] + y_off),
-                fontsize=9, ha="center",
-                bbox=dict(boxstyle="round,pad=0.3", fc="#e6f0ff", ec="black", lw=0.6, alpha=0.9),
-                arrowprops=dict(arrowstyle="->", color="black", lw=0.8),
+            embed_dim = A.shape[1] if A.ndim == 2 else 0
+            assert A.ndim == 2 and A.shape == (len(a_keys), embed_dim), (
+                f"Ожидаем (N, D), получили {A.shape}"
             )
+            print(f"  [emb artist] средний эмбед на артиста: shape={A.shape}")
+        else:
+            a_keys, A = [], np.zeros((0, 1))
+
+        artist_purity = 0.0
+        if len(a_keys) >= 5:
+            n_neighbors_a = min(15, max(2, len(a_keys) - 1))
+            print(f"  [umap artist] input shape={A.shape}, n_neighbors={n_neighbors_a}")
+            t_umap_a = time.perf_counter()
+            reducer_a = umap.UMAP(n_neighbors=n_neighbors_a, min_dist=0.1, n_components=2,
+                                  metric="cosine", random_state=42)
+            A_xy = reducer_a.fit_transform(A)
+            print(f"  [umap artist] output shape={A_xy.shape}, fit={time.perf_counter() - t_umap_a:.1f} сек")
+            degree_a = {n: sum(d["weight"] for _, _, d in G_a_top.edges(n, data=True)) for n in G_a_top.nodes()}
+            order_idx = sorted(range(len(a_keys)), key=lambda i: -degree_a.get(a_keys[i], 0))
+            a_keys_ord = [a_keys[i] for i in order_idx]
+            A_xy_ord = A_xy[order_idx]
+            artist_purity = _plot_umap(
+                axes[1, 2], A_xy_ord, a_keys_ord, part_a, order_a, cmap_a, artist_lab,
+                n_labels=10, title="UMAP проекция артистов по аудио-эмбеддингам",
+            )
+            # Аннотации: малое сообщество vs крупные перемешанные
+            comm_index_a = {c: i for i, c in enumerate(order_a)}
+            comm_centroids: dict[int, np.ndarray] = {}
+            for i, k in enumerate(a_keys_ord):
+                c = comm_index_a[part_a[k]]
+                comm_centroids.setdefault(c, []).append(A_xy_ord[i])
+            comm_sizes_local = {c: len(v) for c, v in comm_centroids.items()}
+            if comm_sizes_local:
+                small_c = min(comm_sizes_local, key=comm_sizes_local.get)
+                big_cs  = sorted(comm_sizes_local, key=comm_sizes_local.get, reverse=True)[:2]
+                small_xy = np.mean(np.array(comm_centroids[small_c]), axis=0)
+                big_xy   = np.mean(np.concatenate(
+                    [np.array(comm_centroids[c]) for c in big_cs]
+                ), axis=0)
+                ax_u = axes[1, 2]
+                xlim = ax_u.get_xlim(); ylim = ax_u.get_ylim()
+                x_off = (xlim[1] - xlim[0]) * 0.25
+                y_off = (ylim[1] - ylim[0]) * 0.30
+                ax_u.annotate(
+                    f"Акустически изолированная\nгруппа (n={comm_sizes_local[small_c]})",
+                    xy=small_xy, xytext=(small_xy[0] + x_off, small_xy[1] - y_off),
+                    fontsize=9, ha="center",
+                    bbox=dict(boxstyle="round,pad=0.3", fc="#fff7c2", ec="black", lw=0.6, alpha=0.9),
+                    arrowprops=dict(arrowstyle="->", color="black", lw=0.8),
+                )
+                ax_u.annotate(
+                    "Поведенческие сообщества,\nакустически перемешаны",
+                    xy=big_xy, xytext=(big_xy[0] - x_off, big_xy[1] + y_off),
+                    fontsize=9, ha="center",
+                    bbox=dict(boxstyle="round,pad=0.3", fc="#e6f0ff", ec="black", lw=0.6, alpha=0.9),
+                    arrowprops=dict(arrowstyle="->", color="black", lw=0.8),
+                )
+        else:
+            axes[1, 2].text(0.5, 0.5, "Недостаточно эмбеддингов для артистов",
+                            ha="center", va="center", transform=axes[1, 2].transAxes)
+            axes[1, 2].axis("off")
     else:
-        axes[1, 2].text(0.5, 0.5, "Недостаточно эмбеддингов для артистов",
-                        ha="center", va="center", transform=axes[1, 2].transAxes)
+        print(f"  [emb] embeddings.parquet не найден — UMAP-валидация пропущена")
+        axes[0, 2].text(0.5, 0.5,
+                        "UMAP-валидация недоступна\n(требуется embeddings.parquet)",
+                        ha="center", va="center", fontsize=11, color="#555",
+                        transform=axes[0, 2].transAxes)
+        axes[0, 2].axis("off")
+        axes[1, 2].text(0.5, 0.5,
+                        "UMAP-валидация недоступна\n(требуется embeddings.parquet)",
+                        ha="center", va="center", fontsize=11, color="#555",
+                        transform=axes[1, 2].transAxes)
         axes[1, 2].axis("off")
 
     n_comm_t = len(order_t)
