@@ -64,7 +64,7 @@ data/results/  → 7 PNG-графиков
 - **scikit-learn** — модели прогноза оттока
 - **Matplotlib + Seaborn + adjustText** — визуализация
 
-## Запуск из исходников (для разработчиков)
+## Запуск из исходников
 
 Этот раздел нужен только если вы хотите модифицировать код проекта или
 работать без bat-файлов.
@@ -92,24 +92,6 @@ python scripts/run_all.py
 # Или одной задачи:
 python -m src.tasks.task1_monthly
 ```
-
-## Сборка дистрибутива (для мейнтейнеров)
-
-Воспроизводимая сборка `YandexMUSIC_ANALYTICS_v1.0.zip`:
-
-```bash
-# 1. Сгенерировать демо-сэмпл из полных данных
-python scripts/build_demo.py
-
-# 2. Скачать портативный Python для дистрибутива
-python scripts/download_embeddable_python.py
-
-# 3. Собрать финальный zip
-python scripts/pack_dist.py
-```
-
-Результат: `dist/YandexMUSIC_ANALYTICS_v1.0.zip`.
-
 ## Структура репозитория
 
 ````
@@ -158,7 +140,3 @@ Yambda — анонимизированный датасет: артисты и 
 ## Источник данных
 
 [Yandex Yambda на HuggingFace](https://huggingface.co/datasets/yandex/yambda)
-
-## Авторы
-
-Курсовая работа команды разработки, 2026.
